@@ -38,6 +38,9 @@ fi
 echo -e "${BLUE}╚══════════════════════════════════════╝${NC}"
 echo ""
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+_has_rooms() { grep -qE '^[a-zA-Z0-9_-]+$' "$1" 2>/dev/null; }
+
 # ── Collect config — always read from /dev/tty so curl|bash works ─────────────
 # Try to load existing values as defaults (with validation to handle corrupted .env)
 OLD_DOMAIN=""; OLD_DNS_ADDR=":53"; OLD_HTTP_PORT="8080"; OLD_MAX_MSGS="100"
@@ -96,6 +99,16 @@ fi
 prompt DNS_ADDR    "DNS listen address"    "${OLD_DNS_ADDR:-:53}"
 prompt HTTP_PORT   "HTTP web UI port"      "${OLD_HTTP_PORT:-8080}"
 prompt MAX_MSGS    "Max messages per room" "${OLD_MAX_MSGS:-100}"
+
+# Rooms — show current list, let user override
+OLD_ROOMS=""
+if [ -f "$DATA_DIR/rooms.txt" ] && _has_rooms "$DATA_DIR/rooms.txt" 2>/dev/null; then
+  OLD_ROOMS=$(grep -E '^[a-zA-Z0-9_-]+$' "$DATA_DIR/rooms.txt" | tr '\n' ',' | sed 's/,$//')
+fi
+DEFAULT_ROOMS="${OLD_ROOMS:-general,tech,random}"
+printf "Rooms (comma-separated) [%s]: " "$DEFAULT_ROOMS" >&2
+read -r ROOMS_INPUT <&3
+[ -z "$ROOMS_INPUT" ] && ROOMS_INPUT="$DEFAULT_ROOMS"
 
 exec 3<&-
 
@@ -168,21 +181,13 @@ fi
 # ── Save config ───────────────────────────────────────────────────────────────
 mkdir -p "$DATA_DIR"
 
-# Create/fix rooms.txt — also recreate if it has no valid room names
-_has_rooms() { grep -qE '^[a-zA-Z0-9_-]+$' "$1" 2>/dev/null; }
-if [ ! -f "$DATA_DIR/rooms.txt" ] || ! _has_rooms "$DATA_DIR/rooms.txt"; then
-  if [ -f "${SCRIPT_DIR:-}/rooms.txt" ] && _has_rooms "${SCRIPT_DIR}/rooms.txt"; then
-    cp "$SCRIPT_DIR/rooms.txt" "$DATA_DIR/rooms.txt"
-  else
-    cat > "$DATA_DIR/rooms.txt" <<'ROOMS'
-general
-tech
-random
-ROOMS
-  fi
-  success "rooms.txt created/fixed in $DATA_DIR/"
+# Write rooms.txt from user input (comma-separated → one per line)
+printf '%s\n' "$ROOMS_INPUT" | tr ',' '\n' | grep -E '^[a-zA-Z0-9_-]+$' > "$DATA_DIR/rooms.txt"
+if _has_rooms "$DATA_DIR/rooms.txt"; then
+  success "rooms.txt updated: $(tr '\n' ' ' < "$DATA_DIR/rooms.txt")"
 else
-  warn "rooms.txt already exists — not overwritten"
+  warn "No valid room names found — writing defaults"
+  printf 'general\ntech\nrandom\n' > "$DATA_DIR/rooms.txt"
 fi
 
 cat > "$DATA_DIR/.env" <<ENV
