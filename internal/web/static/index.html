@@ -15,6 +15,18 @@ body{font-family:system-ui,sans-serif;background:#0d1117;color:#c9d1d9;height:10
 #sidebar-title{font-weight:600;font-size:13px;color:#58a6ff}
 #settings-btn{background:none;border:none;color:#8b949e;cursor:pointer;font-size:16px;padding:2px 4px;border-radius:4px;line-height:1}
 #settings-btn:hover{color:#c9d1d9;background:#21262d}
+#scanner-btn{background:none;border:none;color:#8b949e;cursor:pointer;font-size:14px;padding:2px 4px;border-radius:4px;line-height:1}
+#scanner-btn:hover{color:#c9d1d9;background:#21262d}
+/* Scanner panel */
+.panel-wide{width:480px}
+#scan-progress-bar-wrap{background:#21262d;border-radius:4px;height:6px;overflow:hidden}
+#scan-progress-bar{height:100%;background:#1f6feb;width:0%;transition:width .3s}
+#scan-status-line{font-size:12px;color:#8b949e}
+#scan-results{max-height:180px;overflow-y:auto;margin-top:4px;font-size:12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:6px}
+.scan-result-row{display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #21262d}
+.scan-result-row:last-child{border-bottom:none}
+.scan-result-ip{color:#58a6ff}
+.scan-result-ms{color:#3fb950}
 #room-list{flex:1;overflow-y:auto;padding:4px 0}
 .room-section-label{padding:8px 12px 2px;font-size:11px;color:#484f58;text-transform:uppercase;letter-spacing:.05em}
 .room-item{padding:7px 12px;cursor:pointer;font-size:13px;color:#8b949e;border-radius:4px;margin:1px 4px;display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -164,12 +176,39 @@ body{font-family:system-ui,sans-serif;background:#0d1117;color:#c9d1d9;height:10
   </div>
 </div>
 
+<!-- Scanner panel -->
+<div id="scanner-overlay" class="overlay hidden">
+  <div class="panel panel-wide">
+    <h2>DNS Resolver Scanner</h2>
+    <p>Finds working DNS resolvers that can reach your server</p>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn-primary" id="scan-start-btn" style="flex:1">Scan Public DNS List</button>
+      <button class="btn-secondary" id="scan-stop-btn" style="display:none">Stop</button>
+      <button class="btn-secondary" id="scan-pause-btn" style="display:none">Pause</button>
+    </div>
+    <div class="form-group">
+      <label>Custom targets <span style="color:#484f58">(IPs/CIDRs, one per line — leave blank to use built-in list)</span></label>
+      <textarea id="scan-targets" placeholder="e.g. 78.157.0.0/16&#10;8.8.8.8" style="height:60px"></textarea>
+    </div>
+    <div id="scan-progress-bar-wrap"><div id="scan-progress-bar"></div></div>
+    <div id="scan-status-line">Not running</div>
+    <div id="scan-results"></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn-primary" id="scan-apply-btn" style="flex:1;display:none">Apply Found Resolvers</button>
+      <button class="btn-secondary" id="scanner-close-btn">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Main app -->
 <div id="app">
   <div id="sidebar">
     <div id="sidebar-header">
       <span id="sidebar-title">DNS Messenger</span>
-      <button id="settings-btn" title="Settings">⚙</button>
+      <div style="display:flex;gap:2px">
+        <button id="scanner-btn" title="DNS Scanner">🔍</button>
+        <button id="settings-btn" title="Settings">⚙</button>
+      </div>
     </div>
     <div id="room-list"></div>
     <div id="sidebar-footer">
@@ -514,6 +553,90 @@ function escHtml(s) {
 }
 
 boot();
+
+// ── Scanner ───────────────────────────────────────────────────────────────────
+let scanPollTimer = null;
+
+$('scanner-btn').addEventListener('click', openScanner);
+$('scanner-close-btn').addEventListener('click', () => { hide('scanner-overlay'); stopScanPoll(); });
+$('scan-start-btn').addEventListener('click', startScan);
+$('scan-stop-btn').addEventListener('click', async () => { await fetch('/api/scanner/stop', {method:'POST'}); });
+$('scan-pause-btn').addEventListener('click', async () => {
+  const prog = await fetch('/api/scanner/progress').then(r=>r.json()).catch(()=>({}));
+  if (prog.paused) {
+    await fetch('/api/scanner/resume', {method:'POST'});
+    $('scan-pause-btn').textContent = 'Pause';
+  } else {
+    await fetch('/api/scanner/pause', {method:'POST'});
+    $('scan-pause-btn').textContent = 'Resume';
+  }
+});
+$('scan-apply-btn').addEventListener('click', async () => {
+  await apiPost('/api/scanner/apply', {});
+  $('scan-apply-btn').textContent = 'Applied ✓';
+  setTimeout(() => { $('scan-apply-btn').textContent = 'Apply Found Resolvers'; }, 2000);
+});
+
+function openScanner() {
+  show('scanner-overlay');
+  updateScanProgress();
+}
+
+async function startScan() {
+  const targetsRaw = $('scan-targets').value.trim();
+  const targets = targetsRaw ? targetsRaw.split('\n').map(s=>s.trim()).filter(Boolean) : [];
+  const body = targets.length ? {targets} : {preset: 'public', maxIPs: 500, rateLimit: 30, timeout: 6};
+  try {
+    await apiPost('/api/scanner/start', body);
+    startScanPoll();
+  } catch(e) {
+    $('scan-status-line').textContent = 'Error: ' + (e.message || e);
+  }
+}
+
+function startScanPoll() {
+  stopScanPoll();
+  scanPollTimer = setInterval(updateScanProgress, 1000);
+}
+
+function stopScanPoll() {
+  if (scanPollTimer) { clearInterval(scanPollTimer); scanPollTimer = null; }
+}
+
+async function updateScanProgress() {
+  const p = await fetch('/api/scanner/progress').then(r=>r.json()).catch(()=>null);
+  if (!p) return;
+
+  const running = p.running;
+  const paused  = p.paused;
+  const done    = !running && p.total > 0;
+  const pct     = p.total > 0 ? Math.round(p.scanned / p.total * 100) : 0;
+
+  $('scan-progress-bar').style.width = pct + '%';
+
+  let status = '';
+  if (running)     status = `Scanning… ${p.scanned}/${p.total} (${pct}%) — ${(p.results||[]).length} found`;
+  else if (done)   status = `Done — ${(p.results||[]).length} working resolvers found`;
+  else if (paused) status = `Paused — ${p.scanned}/${p.total}`;
+  else             status = p.total > 0 ? `Stopped at ${p.scanned}/${p.total}` : 'Not running';
+  $('scan-status-line').textContent = status;
+
+  $('scan-start-btn').style.display = running ? 'none' : '';
+  $('scan-stop-btn').style.display  = running ? '' : 'none';
+  $('scan-pause-btn').style.display = running ? '' : 'none';
+  $('scan-pause-btn').textContent   = paused ? 'Resume' : 'Pause';
+
+  const results = p.results || [];
+  $('scan-apply-btn').style.display = results.length > 0 ? '' : 'none';
+  $('scan-results').innerHTML = results.slice(0,50).map(r =>
+    `<div class="scan-result-row">
+      <span class="scan-result-ip">${escHtml(r.IP)}</span>
+      <span class="scan-result-ms">${Math.round(r.LatencyMs)} ms</span>
+    </div>`
+  ).join('') + (results.length > 50 ? `<div style="color:#484f58;padding:4px 0">+${results.length-50} more</div>` : '');
+
+  if (!running && done) stopScanPoll();
+}
 </script>
 </body>
 </html>

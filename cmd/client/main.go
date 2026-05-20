@@ -37,6 +37,7 @@ type app struct {
 	cfg     savedConfig
 	fetcher *client.Fetcher
 	checker *client.ResolverChecker
+	scanner *client.ResolverScanner
 	// fetchCancel cancels the context for the currently running fetcher/checker.
 	fetchCancel context.CancelFunc
 
@@ -169,6 +170,7 @@ func main() {
 		dataDir: *dataDir,
 		debug:   *debug,
 		rootCtx: ctx,
+		scanner: client.NewResolverScanner(),
 	}
 
 	// Load saved config, then overlay any flags that were explicitly provided.
@@ -475,7 +477,7 @@ func buildMux(a *app) *http.ServeMux {
 		jsonOK(w, map[string]string{"result": result})
 	})
 
-	// GET /api/scan
+	// GET /api/scan — trigger health re-check
 	mux.HandleFunc("/api/scan", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -490,6 +492,155 @@ func buildMux(a *app) *http.ServeMux {
 		}
 		go ch.CheckNow(context.Background())
 		jsonOK(w, map[string]string{"status": "scanning"})
+	})
+
+	// ── Scanner API ───────────────────────────────────────────────────────────
+
+	// GET /api/scanner/presets
+	mux.HandleFunc("/api/scanner/presets", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		jsonOK(w, map[string]any{
+			"presets": []map[string]any{
+				{"name": "public", "label": "Public DNS", "count": parseScannerPresetCount()},
+			},
+		})
+	})
+
+	// POST /api/scanner/start
+	mux.HandleFunc("/api/scanner/start", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Targets      []string `json:"targets"`
+			Preset       string   `json:"preset"`
+			MaxIPs       int      `json:"maxIPs"`
+			RateLimit    int      `json:"rateLimit"`
+			Timeout      float64  `json:"timeout"`
+			ExpandSubnet bool     `json:"expandSubnet"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if req.Preset == "public" && len(req.Targets) == 0 {
+			req.Targets = parseScannerPresetLines()
+		}
+		if len(req.Targets) == 0 {
+			http.Error(w, "targets required", http.StatusBadRequest)
+			return
+		}
+		a.mu.RLock()
+		cfg := a.cfg
+		checker := a.checker
+		a.mu.RUnlock()
+		if cfg.Domain == "" || cfg.Passphrase == "" {
+			http.Error(w, "not connected", http.StatusServiceUnavailable)
+			return
+		}
+		// Cancel ongoing health check to free bandwidth.
+		if checker != nil {
+			checker.CancelCurrentScan()
+		}
+		scanCfg := client.ScannerConfig{
+			Targets:      req.Targets,
+			MaxIPs:       req.MaxIPs,
+			RateLimit:    req.RateLimit,
+			Timeout:      req.Timeout,
+			ExpandSubnet: req.ExpandSubnet,
+			Domain:       cfg.Domain,
+			Passphrase:   cfg.Passphrase,
+		}
+		if err := a.scanner.Start(scanCfg); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		jsonOK(w, map[string]any{"ok": true})
+	})
+
+	// POST /api/scanner/stop
+	mux.HandleFunc("/api/scanner/stop", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		a.scanner.Stop()
+		jsonOK(w, map[string]any{"ok": true})
+	})
+
+	// POST /api/scanner/pause
+	mux.HandleFunc("/api/scanner/pause", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		a.scanner.Pause()
+		jsonOK(w, map[string]any{"ok": true})
+	})
+
+	// POST /api/scanner/resume
+	mux.HandleFunc("/api/scanner/resume", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		a.scanner.Resume()
+		jsonOK(w, map[string]any{"ok": true})
+	})
+
+	// GET /api/scanner/progress
+	mux.HandleFunc("/api/scanner/progress", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		jsonOK(w, a.scanner.Progress())
+	})
+
+	// POST /api/scanner/apply — set scanned resolvers as active
+	mux.HandleFunc("/api/scanner/apply", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Resolvers []string `json:"resolvers"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+
+		resolvers := req.Resolvers
+		if len(resolvers) == 0 {
+			prog := a.scanner.Progress()
+			for _, res := range prog.Results {
+				resolvers = append(resolvers, res.IP)
+			}
+		}
+		if len(resolvers) == 0 {
+			http.Error(w, "no resolvers to apply", http.StatusBadRequest)
+			return
+		}
+		// Ensure :53 suffix.
+		for i, res := range resolvers {
+			if !strings.Contains(res, ":") {
+				resolvers[i] = res + ":53"
+			}
+		}
+
+		a.mu.Lock()
+		if a.fetcher != nil {
+			a.fetcher.SetActiveResolvers(resolvers)
+		}
+		if a.cfg.Domain != "" {
+			a.cfg.Resolvers = resolvers
+			a.saveConfig(a.cfg)
+		}
+		a.mu.Unlock()
+
+		jsonOK(w, map[string]any{"ok": true, "count": len(resolvers)})
 	})
 
 	return mux
