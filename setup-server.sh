@@ -76,14 +76,27 @@ fi
 
 export PATH="/usr/local/go/bin:$PATH"
 
-# ── 4. Build binaries ──────────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# ── 4. Clone repo if running via curl | bash ──────────────────────────────────
+REPO_URL="https://github.com/Mysterious53/dns-messenger.git"
+
+# BASH_SOURCE[0] is empty or /dev/stdin when piped through curl | bash
+if [ -z "${BASH_SOURCE[0]}" ] || [ "${BASH_SOURCE[0]}" = "/dev/stdin" ] || [ "${BASH_SOURCE[0]}" = "bash" ]; then
+  info "Detected curl | bash — cloning repository..."
+  CLONE_DIR="/tmp/dns-messenger-src"
+  rm -rf "$CLONE_DIR"
+  git clone --depth=1 "$REPO_URL" "$CLONE_DIR" || die "Clone failed"
+  SCRIPT_DIR="$CLONE_DIR"
+else
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
+# ── 5. Build binaries ──────────────────────────────────────────────────────────
 info "Building server binary..."
 cd "$SCRIPT_DIR"
 go build -ldflags="-s -w" -o /tmp/dnsmsg-server ./cmd/server || die "Build failed"
 success "Server binary built"
 
-# ── 5. Install files ───────────────────────────────────────────────────────────
+# ── 6. Install files ───────────────────────────────────────────────────────────
 info "Installing files..."
 mkdir -p "$INSTALL_DIR" "$DATA_DIR"
 

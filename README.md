@@ -35,22 +35,46 @@ Client ──DNS TXT query──► Server (port 53)
 
 ## راه‌اندازی سرور
 
-### روش سریع (اسکریپت)
+### ⚡ روش سریع — یک دستور
+
+روی سرور لینوکسی (Ubuntu / Debian / CentOS) این دستور رو اجرا کنید:
 
 ```bash
-git clone <repo>
-cd dnsmessenger
-sudo bash setup-server.sh
+curl -fsSL https://raw.githubusercontent.com/Mysterious53/dns-messenger/main/setup-server.sh | sudo bash
 ```
 
-اسکریپت از شما می‌پرسه:
-- **Domain** — دامنه سرور (مثلاً `chat.example.com`)
-- **Passphrase** — رمز مشترک بین سرور و کلاینت‌ها
-- پورت‌های DNS و HTTP
+> یا اگه ترجیح می‌دید فایل رو اول ببینید:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/Mysterious53/dns-messenger/main/setup-server.sh -o setup.sh
+> cat setup.sh          # بررسی محتوا
+> sudo bash setup.sh
+> ```
 
-بعد از اتمام، سرویس systemd می‌سازه و شروع می‌کنه.
+اسکریپت به‌ترتیب:
 
-### دستی
+| مرحله | کار |
+|-------|-----|
+| ۱ | Go 1.22 را نصب می‌کند (اگه نباشه) |
+| ۲ | پروژه را clone و build می‌کند |
+| ۳ | از شما **domain**، **passphrase** و پورت می‌پرسد |
+| ۴ | فایل‌ها را در `/opt/dnsmessenger` نصب می‌کند |
+| ۵ | یک systemd service می‌سازد و enable می‌کند |
+| ۶ | پورت‌های `53/udp` و HTTP را در فایروال باز می‌کند |
+| ۷ | سرویس را start می‌کند و خلاصه اتصال را نشان می‌دهد |
+
+**نمونه خروجی پایان اسکریپت:**
+```
+╔══════════════════════════════════════════════════════╗
+║               Setup Complete!                       ║
+╠══════════════════════════════════════════════════════╣
+║  Domain    : chat.example.com
+║  DNS       : 1.2.3.4:53 (UDP)
+║  Web UI    : http://1.2.3.4:8080
+║  Rooms     : /var/lib/dnsmessenger/rooms.txt
+╚══════════════════════════════════════════════════════╝
+```
+
+### روش دستی (clone + build)
 
 ```bash
 # Build
