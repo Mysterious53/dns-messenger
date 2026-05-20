@@ -1,0 +1,22 @@
+# Binaries
+dnsmsg-server
+dnsmsg-client
+*.exe
+
+# Build output
+/bin/
+/dist/
+
+# Data & config (sensitive)
+*.passphrase
+.env
+config.json
+/var/
+
+# Go
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp

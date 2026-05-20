@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>DNS Messenger</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#0d1117;color:#c9d1d9;height:100vh;display:flex;flex-direction:column}
+#app{display:flex;flex:1;overflow:hidden}
+
+/* Sidebar */
+#sidebar{width:220px;background:#161b22;border-right:1px solid #21262d;display:flex;flex-direction:column;flex-shrink:0}
+#sidebar-header{padding:10px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #21262d}
+#sidebar-title{font-weight:600;font-size:13px;color:#58a6ff}
+#settings-btn{background:none;border:none;color:#8b949e;cursor:pointer;font-size:16px;padding:2px 4px;border-radius:4px;line-height:1}
+#settings-btn:hover{color:#c9d1d9;background:#21262d}
+#room-list{flex:1;overflow-y:auto;padding:4px 0}
+.room-section-label{padding:8px 12px 2px;font-size:11px;color:#484f58;text-transform:uppercase;letter-spacing:.05em}
+.room-item{padding:7px 12px;cursor:pointer;font-size:13px;color:#8b949e;border-radius:4px;margin:1px 4px;display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.room-item:hover{background:#1c2128;color:#c9d1d9}
+.room-item.active{background:#1f6feb22;color:#58a6ff;font-weight:500}
+.room-icon{flex-shrink:0;font-style:normal}
+#sidebar-footer{padding:8px 12px;border-top:1px solid #21262d;display:flex;align-items:center;justify-content:space-between;gap:6px}
+#username-display{font-size:12px;color:#8b949e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#username-display b{color:#c9d1d9}
+#rescan-btn{flex-shrink:0;padding:4px 8px;background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;font-size:11px}
+#rescan-btn:hover{color:#c9d1d9}
+
+/* Chat */
+#chat{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#chat-header{padding:10px 16px;background:#161b22;border-bottom:1px solid #21262d;display:flex;align-items:center;justify-content:space-between;gap:8px}
+#chat-room-name{font-weight:600;font-size:14px;color:#c9d1d9}
+#chat-status{font-size:11px;color:#8b949e;white-space:nowrap}
+#refresh-btn{padding:3px 10px;background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;font-size:12px;flex-shrink:0}
+#refresh-btn:hover{color:#c9d1d9}
+#messages{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:3px}
+
+/* Bubble row */
+.msg-row{display:flex;margin-bottom:2px}
+.msg-row.mine{justify-content:flex-end}
+.msg-row.other{justify-content:flex-start}
+
+/* Bubble */
+.bubble{max-width:72%;padding:8px 12px 6px;border-radius:16px;position:relative;word-break:break-word}
+.msg-row.other .bubble{
+  background:#1c2128;
+  border-radius:4px 16px 16px 16px;
+}
+.msg-row.mine .bubble{
+  background:#1a3a5c;
+  border-radius:16px 4px 16px 16px;
+}
+
+/* Sender name — only for others */
+.bubble-sender{font-size:12px;font-weight:600;color:#58a6ff;margin-bottom:3px;display:block}
+
+/* Message text */
+.bubble-text{font-size:14px;line-height:1.55;color:#c9d1d9}
+.msg-line{display:block;min-height:1.55em}
+
+/* Timestamp — bottom-right footer inside bubble */
+.bubble-footer{display:flex;justify-content:flex-end;margin-top:3px}
+.bubble-time{font-size:11px;color:#6e7681;line-height:1;white-space:nowrap}
+.msg-row.mine .bubble-time{color:#4d7fa8}
+
+/* Group same-sender bubbles closer */
+.msg-row+.msg-row.other{margin-top:1px}
+.msg-row+.msg-row.mine{margin-top:1px}
+
+#empty-state{text-align:center;color:#484f58;padding:40px 20px;font-size:13px;line-height:1.7}
+
+/* Input */
+#input-area{padding:10px 14px;background:#0d1117;border-top:1px solid #21262d;display:flex;gap:8px;align-items:flex-end}
+#msg-input{flex:1;background:#161b22;border:1px solid #30363d;border-radius:12px;padding:8px 14px;color:#c9d1d9;font-size:14px;resize:none;min-height:40px;max-height:120px;font-family:inherit;line-height:1.45;overflow-y:auto}
+#msg-input:focus{outline:none;border-color:#388bfd}
+#msg-input:disabled{opacity:0.4;cursor:not-allowed}
+#send-btn{padding:0 18px;background:#1f6feb;border:none;border-radius:10px;color:#fff;cursor:pointer;font-size:13px;font-weight:600;height:40px;white-space:nowrap;flex-shrink:0}
+#send-btn:hover:not(:disabled){background:#388bfd}
+#send-btn:disabled{opacity:0.4;cursor:not-allowed}
+
+/* Overlay base */
+.overlay{position:fixed;inset:0;background:#0d111799;display:flex;align-items:center;justify-content:center;z-index:100}
+.panel{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:28px;width:360px;display:flex;flex-direction:column;gap:14px}
+.panel h2{font-size:18px;color:#c9d1d9;text-align:center}
+.panel p{font-size:13px;color:#8b949e;text-align:center}
+.panel h3{font-size:14px;color:#8b949e;padding-bottom:4px;border-bottom:1px solid #21262d}
+.form-group{display:flex;flex-direction:column;gap:5px}
+.form-group label{font-size:12px;color:#8b949e}
+.form-group input,.form-group textarea{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px 10px;color:#c9d1d9;font-size:13px;font-family:inherit}
+.form-group input:focus,.form-group textarea:focus{outline:none;border-color:#58a6ff}
+.form-group textarea{resize:vertical;min-height:64px}
+.btn-primary{padding:9px;background:#1f6feb;border:none;border-radius:6px;color:#fff;font-size:13px;font-weight:600;cursor:pointer;width:100%}
+.btn-primary:hover:not(:disabled){background:#388bfd}
+.btn-primary:disabled{opacity:0.5;cursor:not-allowed}
+.btn-secondary{padding:8px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:13px;cursor:pointer;width:100%}
+.btn-secondary:hover{background:#30363d}
+.btn-danger{padding:8px;background:transparent;border:1px solid #f8514933;border-radius:6px;color:#f85149;font-size:13px;cursor:pointer;width:100%}
+.btn-danger:hover{background:#f8514911}
+.error-msg{color:#f85149;font-size:12px;text-align:center;display:none;min-height:16px}
+.hidden{display:none!important}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px}
+</style>
+</head>
+<body>
+
+<!-- Setup / Connect screen -->
+<div id="setup-overlay" class="overlay">
+  <div class="panel">
+    <h2>DNS Messenger</h2>
+    <p>Connect to a DNS Messenger server</p>
+    <div class="form-group">
+      <label>Domain</label>
+      <input id="setup-domain" type="text" placeholder="chat.example.com" autocomplete="off"/>
+    </div>
+    <div class="form-group">
+      <label>Passphrase</label>
+      <input id="setup-passphrase" type="password" placeholder="shared secret" autocomplete="current-password"/>
+    </div>
+    <div class="form-group">
+      <label>Username</label>
+      <input id="setup-username" type="text" placeholder="your name" autocomplete="username"/>
+    </div>
+    <details style="cursor:pointer">
+      <summary style="font-size:12px;color:#8b949e;user-select:none">Advanced</summary>
+      <div class="form-group" style="margin-top:8px">
+        <label>DNS Resolvers (one per line)</label>
+        <textarea id="setup-resolvers" placeholder="8.8.8.8&#10;1.1.1.1&#10;9.9.9.9"></textarea>
+      </div>
+    </details>
+    <div class="error-msg" id="setup-error"></div>
+    <button class="btn-primary" id="setup-connect-btn">Connect</button>
+  </div>
+</div>
+
+<!-- Settings panel -->
+<div id="settings-overlay" class="overlay hidden">
+  <div class="panel">
+    <h2>Settings</h2>
+    <div class="form-group">
+      <label>Domain</label>
+      <input id="cfg-domain" type="text"/>
+    </div>
+    <div class="form-group">
+      <label>New Passphrase <span style="color:#484f58">(leave blank to keep current)</span></label>
+      <input id="cfg-passphrase" type="password" placeholder="(unchanged)"/>
+    </div>
+    <div class="form-group">
+      <label>Username</label>
+      <input id="cfg-username" type="text"/>
+    </div>
+    <div class="form-group">
+      <label>DNS Resolvers (one per line)</label>
+      <textarea id="cfg-resolvers"></textarea>
+    </div>
+    <div class="error-msg" id="cfg-error"></div>
+    <button class="btn-primary" id="cfg-save-btn">Save &amp; Reconnect</button>
+    <button class="btn-secondary" id="cfg-cancel-btn">Cancel</button>
+    <button class="btn-danger" id="cfg-disconnect-btn">Disconnect &amp; Forget Server</button>
+  </div>
+</div>
+
+<!-- Main app -->
+<div id="app">
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <span id="sidebar-title">DNS Messenger</span>
+      <button id="settings-btn" title="Settings">⚙</button>
+    </div>
+    <div id="room-list"></div>
+    <div id="sidebar-footer">
+      <span id="username-display">as <b id="current-username">-</b></span>
+      <button id="rescan-btn">Rescan</button>
+    </div>
+  </div>
+  <div id="chat">
+    <div id="chat-header">
+      <span id="chat-room-name">Select a room</span>
+      <div style="display:flex;align-items:center;gap:6px">
+        <button id="refresh-btn">Refresh</button>
+        <span id="chat-status"></span>
+      </div>
+    </div>
+    <div id="messages"><div id="empty-state">Select a room to start chatting</div></div>
+    <div id="input-area">
+      <textarea id="msg-input" placeholder="Type a message… (Enter to send)" disabled></textarea>
+      <button id="send-btn" disabled>Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// --- State ---
+const S = {
+  configured: false,
+  username: 'anon',
+  domain: '',
+  savedPassphrase: '', // kept only for settings re-submit when field is blank
+  rooms: [],
+  activeRoom: null,
+  messages: [],
+  pollTimer: null,
+  lastCount: 0,
+};
+
+// --- DOM helpers ---
+const $ = id => document.getElementById(id);
+const show = id => $(id).classList.remove('hidden');
+const hide = id => $(id).classList.add('hidden');
+
+// --- Boot ---
+async function boot() {
+  try {
+    const info = await apiGet('/api/server');
+    if (info.configured) {
+      onConnected(info);
+    } else {
+      showSetup();
+    }
+  } catch {
+    showSetup();
+  }
+}
+
+function onConnected(info) {
+  S.configured = true;
+  S.domain = info.domain || '';
+  S.username = info.username || 'anon';
+  $('current-username').textContent = S.username;
+  hide('setup-overlay');
+  hide('settings-overlay');
+  loadRooms();
+}
+
+function showSetup() {
+  S.configured = false;
+  $('setup-error').style.display = 'none';
+  $('setup-passphrase').value = '';
+  show('setup-overlay');
+}
+
+// --- Setup form ---
+$('setup-connect-btn').addEventListener('click', doConnect);
+['setup-domain','setup-passphrase','setup-username'].forEach(id => {
+  $(id).addEventListener('keydown', e => { if (e.key === 'Enter') doConnect(); });
+});
+
+async function doConnect() {
+  const domain = $('setup-domain').value.trim();
+  const passphrase = $('setup-passphrase').value;
+  const username = $('setup-username').value.trim() || 'anon';
+  const resolversRaw = $('setup-resolvers').value.trim();
+  const resolvers = resolversRaw
+    ? resolversRaw.split('\n').map(s => s.trim()).filter(Boolean)
+    : [];
+
+  if (!domain || !passphrase) {
+    showError('setup-error', 'Domain and passphrase are required');
+    return;
+  }
+
+  $('setup-connect-btn').disabled = true;
+  $('setup-error').style.display = 'none';
+  try {
+    await apiPost('/api/server', { domain, passphrase, username, resolvers });
+    S.savedPassphrase = passphrase;
+    const info = await apiGet('/api/server');
+    onConnected(info);
+  } catch (e) {
+    showError('setup-error', e.message || 'Connection failed');
+  } finally {
+    $('setup-connect-btn').disabled = false;
+  }
+}
+
+// --- Settings panel ---
+$('settings-btn').addEventListener('click', openSettings);
+$('cfg-cancel-btn').addEventListener('click', () => hide('settings-overlay'));
+$('cfg-save-btn').addEventListener('click', saveSettings);
+$('cfg-disconnect-btn').addEventListener('click', doDisconnect);
+
+async function openSettings() {
+  const info = await apiGet('/api/server').catch(() => ({}));
+  $('cfg-domain').value = info.domain || '';
+  $('cfg-username').value = info.username || '';
+  $('cfg-resolvers').value = (info.resolvers || []).join('\n');
+  $('cfg-passphrase').value = '';
+  $('cfg-error').style.display = 'none';
+  show('settings-overlay');
+}
+
+async function saveSettings() {
+  const domain = $('cfg-domain').value.trim();
+  const passphrase = $('cfg-passphrase').value || S.savedPassphrase;
+  const username = $('cfg-username').value.trim() || 'anon';
+  const resolvers = $('cfg-resolvers').value.split('\n').map(s => s.trim()).filter(Boolean);
+
+  if (!domain || !passphrase) {
+    showError('cfg-error', 'Domain and passphrase are required');
+    return;
+  }
+  $('cfg-save-btn').disabled = true;
+  try {
+    await apiPost('/api/server', { domain, passphrase, username, resolvers });
+    S.savedPassphrase = passphrase;
+    const info = await apiGet('/api/server');
+    hide('settings-overlay');
+    onConnected(info);
+  } catch (e) {
+    showError('cfg-error', e.message || 'Failed to reconnect');
+  } finally {
+    $('cfg-save-btn').disabled = false;
+  }
+}
+
+async function doDisconnect() {
+  if (!confirm('Disconnect and forget this server?')) return;
+  clearInterval(S.pollTimer);
+  S.activeRoom = null;
+  S.rooms = [];
+  await fetch('/api/server', { method: 'DELETE' }).catch(() => {});
+  S.savedPassphrase = '';
+  $('setup-domain').value = S.domain;
+  $('setup-username').value = S.username;
+  $('setup-passphrase').value = '';
+  hide('settings-overlay');
+  showSetup();
+}
+
+// --- Room list ---
+async function loadRooms() {
+  try {
+    const rooms = await apiGet('/api/rooms');
+    S.rooms = rooms || [];
+    renderRooms();
+  } catch (e) {
+    $('chat-status').textContent = 'Error: ' + e.message;
+  }
+}
+
+function renderRooms() {
+  $('room-list').innerHTML = '';
+  const pub = S.rooms.filter(r => !r.is_dm);
+  const dms = S.rooms.filter(r => r.is_dm);
+
+  if (pub.length) {
+    appendLabel('Rooms');
+    pub.forEach(r => $('room-list').appendChild(makeRoomEl(r)));
+  }
+  if (dms.length) {
+    appendLabel('Direct Messages');
+    dms.forEach(r => $('room-list').appendChild(makeRoomEl(r)));
+  }
+  if (!S.rooms.length) {
+    const el = document.createElement('div');
+    el.style.cssText = 'padding:16px 12px;font-size:12px;color:#484f58;text-align:center';
+    el.textContent = 'No rooms found';
+    $('room-list').appendChild(el);
+  }
+}
+
+function appendLabel(text) {
+  const el = document.createElement('div');
+  el.className = 'room-section-label';
+  el.textContent = text;
+  $('room-list').appendChild(el);
+}
+
+function makeRoomEl(room) {
+  const el = document.createElement('div');
+  el.className = 'room-item' + (S.activeRoom?.id === room.id ? ' active' : '');
+  const icon = room.is_dm ? '👤' : '#';
+  const name = room.is_dm ? room.name.replace('dm:', '').replace(':', ' ↔ ') : room.name;
+  el.innerHTML = `<i class="room-icon">${icon}</i><span>${escHtml(name)}</span>`;
+  el.addEventListener('click', () => selectRoom(room));
+  return el;
+}
+
+// --- Chat ---
+function selectRoom(room) {
+  S.activeRoom = room;
+  S.messages = [];
+  S.lastCount = 0;
+  clearInterval(S.pollTimer);
+  renderRooms();
+
+  const name = room.is_dm
+    ? room.name.replace('dm:', '').replace(':', ' ↔ ')
+    : '#' + room.name;
+  $('chat-room-name').textContent = name;
+  $('msg-input').disabled = false;
+  $('send-btn').disabled = false;
+
+  fetchMessages(room);
+  S.pollTimer = setInterval(() => fetchMessages(S.activeRoom), 10000);
+}
+
+async function fetchMessages(room) {
+  if (!room) return;
+  $('chat-status').textContent = '…';
+  try {
+    const url = `/api/messages?room=${room.id}` + (room.block_count ? `&blocks=${room.block_count}` : '');
+    const msgs = await apiGet(url);
+    S.messages = msgs || [];
+    renderMessages();
+    $('chat-status').textContent = `${S.messages.length} msg${S.messages.length !== 1 ? 's' : ''}`;
+  } catch (e) {
+    $('chat-status').textContent = 'Error: ' + e.message;
+  }
+}
+
+function renderMessages() {
+  const atBottom = $('messages').scrollHeight - $('messages').scrollTop <= $('messages').clientHeight + 60;
+  $('messages').innerHTML = '';
+  if (!S.messages.length) {
+    $('messages').innerHTML = '<div id="empty-state">No messages yet</div>';
+    return;
+  }
+  let prevSender = null;
+  S.messages.forEach(m => {
+    const isMine = m.sender === S.username;
+    const ts = m.ts ? new Date(m.ts * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+    const showSender = !isMine && m.sender !== prevSender;
+    prevSender = m.sender;
+
+    const row = document.createElement('div');
+    row.className = 'msg-row ' + (isMine ? 'mine' : 'other');
+    row.innerHTML = `
+      <div class="bubble">
+        ${showSender ? `<span class="bubble-sender">${escHtml(m.sender||'anon')}</span>` : ''}
+        <div class="bubble-text">${renderText(m.text||'')}</div>
+        <div class="bubble-footer"><span class="bubble-time">${ts}</span></div>
+      </div>`;
+    $('messages').appendChild(row);
+  });
+  if (atBottom || S.messages.length !== S.lastCount) {
+    $('messages').scrollTop = $('messages').scrollHeight;
+  }
+  S.lastCount = S.messages.length;
+}
+
+// --- Send ---
+async function sendMessage() {
+  const text = $('msg-input').value.trim();
+  if (!text || !S.activeRoom) return;
+  $('msg-input').value = '';
+  $('send-btn').disabled = true;
+  try {
+    await apiPost('/api/send', {room: S.activeRoom.id, text});
+    setTimeout(() => fetchMessages(S.activeRoom), 400);
+  } catch (e) {
+    $('chat-status').textContent = 'Send failed: ' + e.message;
+  } finally {
+    $('send-btn').disabled = false;
+    $('msg-input').focus();
+  }
+}
+
+$('send-btn').addEventListener('click', sendMessage);
+$('msg-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+
+$('refresh-btn').addEventListener('click', () => {
+  loadRooms();
+  if (S.activeRoom) fetchMessages(S.activeRoom);
+});
+
+$('rescan-btn').addEventListener('click', async () => {
+  $('rescan-btn').textContent = '…';
+  await fetch('/api/scan').catch(() => {});
+  setTimeout(() => $('rescan-btn').textContent = 'Rescan', 1500);
+});
+
+// --- API helpers ---
+async function apiGet(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function apiPost(url, body) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function showError(id, msg) {
+  const el = $(id);
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+// Render message text: each line gets its own dir="auto" span so
+// Persian lines go RTL and English lines go LTR independently.
+function renderText(s) {
+  return s.split('\n').map(line =>
+    `<span class="msg-line" dir="auto">${escHtml(line)}</span>`
+  ).join('');
+}
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+boot();
+</script>
+</body>
+</html>
