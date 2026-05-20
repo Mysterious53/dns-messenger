@@ -39,14 +39,15 @@ echo -e "${BLUE}╚════════════════════�
 echo ""
 
 # ── Collect config — always read from /dev/tty so curl|bash works ─────────────
-# Try to load existing values as defaults
+# Try to load existing values as defaults (with validation to handle corrupted .env)
 OLD_DOMAIN=""; OLD_DNS_ADDR=":53"; OLD_HTTP_PORT="8080"; OLD_MAX_MSGS="100"
 if [ -f "$DATA_DIR/.env" ]; then
-  source "$DATA_DIR/.env" 2>/dev/null || true
-  OLD_DOMAIN="${DOMAIN:-}"
-  OLD_DNS_ADDR="${DNS_ADDR:-:53}"
-  OLD_HTTP_PORT="${HTTP_PORT:-8080}"
-  OLD_MAX_MSGS="${MAX_MSGS:-100}"
+  # Parse manually to avoid corrupted KEY=KEY=VALUE entries
+  _env() { grep -m1 "^${1}=" "$DATA_DIR/.env" 2>/dev/null | cut -d= -f2-; }
+  _d="$(_env DOMAIN)";    [[ "$_d" =~ ^[a-zA-Z0-9._-]+$ ]]  && OLD_DOMAIN="$_d"
+  _a="$(_env DNS_ADDR)";  [[ "$_a" =~ ^:?[0-9]+$|^[0-9.]+ ]] && OLD_DNS_ADDR="$_a"
+  _p="$(_env HTTP_PORT)"; [[ "$_p" =~ ^[0-9]+$ ]]            && OLD_HTTP_PORT="$_p"
+  _m="$(_env MAX_MSGS)";  [[ "$_m" =~ ^[0-9]+$ ]]            && OLD_MAX_MSGS="$_m"
 fi
 
 # Read interactively from /dev/tty (works with curl|bash)
@@ -167,8 +168,10 @@ fi
 # ── Save config ───────────────────────────────────────────────────────────────
 mkdir -p "$DATA_DIR"
 
-if [ ! -f "$DATA_DIR/rooms.txt" ]; then
-  if [ -f "${SCRIPT_DIR:-}/rooms.txt" ]; then
+# Create/fix rooms.txt — also recreate if it has no valid room names
+_has_rooms() { grep -qE '^[a-zA-Z0-9_-]+$' "$1" 2>/dev/null; }
+if [ ! -f "$DATA_DIR/rooms.txt" ] || ! _has_rooms "$DATA_DIR/rooms.txt"; then
+  if [ -f "${SCRIPT_DIR:-}/rooms.txt" ] && _has_rooms "${SCRIPT_DIR}/rooms.txt"; then
     cp "$SCRIPT_DIR/rooms.txt" "$DATA_DIR/rooms.txt"
   else
     cat > "$DATA_DIR/rooms.txt" <<'ROOMS'
@@ -177,7 +180,7 @@ tech
 random
 ROOMS
   fi
-  success "rooms.txt created in $DATA_DIR/"
+  success "rooms.txt created/fixed in $DATA_DIR/"
 else
   warn "rooms.txt already exists — not overwritten"
 fi
@@ -262,7 +265,7 @@ echo -e "${GREEN}╔════════════════════
 echo -e "${GREEN}║               Setup Complete!                       ║${NC}"
 echo -e "${GREEN}╠══════════════════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}║${NC}  Domain    : ${BLUE}${DOMAIN}${NC}"
-echo -e "${GREEN}║${NC}  DNS       : ${BLUE}${SERVER_IP}:53 (UDP)${NC}"
+echo -e "${GREEN}║${NC}  DNS       : ${BLUE}${SERVER_IP}:${DNS_ADDR##*:} (UDP)${NC}"
 echo -e "${GREEN}║${NC}  Web UI    : ${BLUE}http://${SERVER_IP}:${HTTP_PORT}${NC}"
 echo -e "${GREEN}║${NC}  Rooms     : ${BLUE}${DATA_DIR}/rooms.txt${NC}"
 echo -e "${GREEN}╠══════════════════════════════════════════════════════╣${NC}"
@@ -275,6 +278,6 @@ echo -e "${GREEN}╚════════════════════
 echo ""
 echo -e "  ${YELLOW}Client connection info:${NC}"
 echo -e "  Domain     : ${BLUE}${DOMAIN}${NC}"
-echo -e "  Resolver   : ${BLUE}${SERVER_IP}:53${NC}"
+echo -e "  Resolver   : ${BLUE}${SERVER_IP}:${DNS_ADDR##*:}${NC}"
 echo -e "  Passphrase : ${BLUE}(what you entered)${NC}"
 echo ""
